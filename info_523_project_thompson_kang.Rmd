@@ -1,0 +1,124 @@
+---
+title: "House Prices - Advanced Regression Techniques"
+author: "Team Thompson / Kang-Sim"
+date: "Fall 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+#load libraries
+library(tidyverse)
+library(knitr)
+library(reshape2)
+library(recipes)
+library(caret)
+```
+
+## Dataset description:
+There are 79 explanatory varaibles describing almost every aspect of residential homes in Ames, Iowa. The dataset is hosted by Kaggle.com under the competition to predict the final price of each home. 
+
+## Rationale for choosing this project
+
+EK: Thompson and I were discussing for a practical data set that allows us to apply techniques we learned/read/practiced from the class. The housing data set provides that room for creativity with 79 explanatory variables. 
+
+#Goal option 01: build a regression model with splines to predict the sales price. 
+
+```{r load dataset and explore}
+
+df.1<- read_csv ("data/train.csv")
+#1460 obs 81 variables
+
+glimpse(df.1)
+```
+
+
+EK: Address missingness
+
+```{r}
+#count missing values in the df.1
+
+sum(is.na(df.1))
+#there are 6965 missing values; ggplot2's geom_raster allows us to easily see where the majority of missing values occur
+
+df.1%>%
+  is.na()%>%
+  reshape2::melt()%>%
+  ggplot(aes (Var2, 
+              Var1, 
+              fill=value)) +
+  geom_raster()+
+  coord_flip()+
+  scale_y_continuous(NULL, 
+                     expand = c(0,0))+
+  theme(axis.text.y = element_text(
+    size=4
+  ))
+```
+We may filter out those varaibles with high frequency of missingness
+```{r}
+df.2<- df.1%>%
+  select(-c(MiscFeature,
+            Fence,
+            PoolQC,
+            FireplaceQu,
+            Alley,
+            LotFrontage))
+```
+Prior to imputation step, let's filter unimportant variables:
+
+"Zero and near-zero variance varaibles are low-hanging fruit to eliminate"
+
+Zero-variance: only one single value and provides no useful information for modeling
+
+Near-zero variance also contributes very little. 
+
+A rule of thumb for detecting near-zero variance varaibles is: 
+1) the fraction of unique values over the sample size is low (<10%)
+2) the ratio of the frequency of the most prevalent value to the frequency of the second most prevalent value is large (>20%)
+
+```{r}
+caret::nearZeroVar(df.2,
+                   saveMetrics = T)%>%
+  tibble::rownames_to_column()%>%
+  filter(nzv)%>%
+  kable()
+
+#select out these near zero variance variables
+df.3<- df.2%>%
+  select(-c(Street,
+            LandContour,
+            Utilities,
+            LandSlope,
+            Condition2, 
+            RoofMatl,
+            BsmtCond,
+            BsmtFinType2,
+            BsmtFinSF2,
+            Heating,
+            LowQualFinSF,
+            KitchenAbvGr,
+            Functional,
+            GarageQual,
+            GarageCond,
+            EnclosedPorch,
+            `3SsnPorch`,
+            ScreenPorch,
+            PoolArea,
+            MiscVal))
+
+write_csv(df.3, "data/train_r_11092021.csv")
+
+#use df.3 for subsequent analysis
+```
+
+
+
+
+Imputation section:
+```{r}
+
+
+```
+
