@@ -10,23 +10,36 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
 
 #load libraries
 library(tidyverse)
+library(tidymodels)
+library(ggpubr)
 library(knitr)
 library(reshape2)
 library(recipes)
 library(caret)
+library(randomForest)
+
+#remove all objects: 
+rm(list=ls())
+
+
 ```
 
 ## Dataset description:
-There are 79 explanatory varaibles describing almost every aspect of residential homes in Ames, Iowa. The dataset is hosted by Kaggle.com under the competition to predict the final price of each home. 
+There are 79 explanatory variables describing almost every aspect of residential homes in Ames, Iowa. The data set is hosted by Kaggle.com under the competition to predict the final price of each home. 
 
 ## Rationale for choosing this project
 
 EK: Thompson and I were discussing for a practical data set that allows us to apply techniques we learned/read/practiced from the class. The housing data set provides that room for creativity with 79 explanatory variables. 
 
-#Goal option 01: build a regression model with splines to predict the sales price. 
+[Tingting, feel free to add your comments]
+
+## Two aims for the project:
+
+#Aim 01: apply random forest technique to predict influencial feautures
+
+#Aim 02: build a regression model with splines to predict the sales price; if possible, use selected feautures from random forest
 
 ```{r load dataset and explore}
-
 df.1<- read_csv ("data/train.csv")
 #1460 obs 81 variables
 
@@ -34,7 +47,19 @@ glimpse(df.1)
 ```
 
 
-EK: Address missingness
+# Pre-processing data:
+Pre-processing data involves: 
+- address missingness
+- removing near-zero variance (non-influential) variables
+- cleaning data
+- standardizing variables (so that all features are in unified units) 
+- manipulate categorical/string variables into dummies. 
+
+NOTE: during the pre-processing step, leave the outcome (housing price) variable out.
+
+EK: Address missingness.
+
+There are three main types of missing patterns: Missing completely at random, missing at random, and missing not at random. 
 
 ```{r}
 #count missing values in the df.1
@@ -56,7 +81,12 @@ df.1%>%
     size=4
   ))
 ```
-We may filter out those varaibles with high frequency of missingness
+There are several options: 
+1. deleting variables: if variables with missing values contribute very little to the the outcome, it makes sense to remove the variable from the dataset. 
+2. Imputation: several options available; multiple multivariate imputation is preferred.
+
+For this pre-processing step of the final project, we noted that most of missing variables are near-zero variance variables; thus, removed from dataset.
+
 ```{r}
 df.2<- df.1%>%
   select(-c(MiscFeature,
@@ -68,13 +98,13 @@ df.2<- df.1%>%
 ```
 Prior to imputation step, let's filter unimportant variables:
 
-"Zero and near-zero variance varaibles are low-hanging fruit to eliminate"
+"Zero and near-zero variance variables are low-hanging fruit to eliminate"
 
 Zero-variance: only one single value and provides no useful information for modeling
 
 Near-zero variance also contributes very little. 
 
-A rule of thumb for detecting near-zero variance varaibles is: 
+A rule of thumb for detecting near-zero variance variables is: 
 1) the fraction of unique values over the sample size is low (<10%)
 2) the ratio of the frequency of the most prevalent value to the frequency of the second most prevalent value is large (>20%)
 
@@ -110,15 +140,120 @@ df.3<- df.2%>%
 
 write_csv(df.3, "data/train_r_11092021.csv")
 
-#use df.3 for subsequent analysis
+
+
+sum(is.na(df.3))
+#372 missing values; we may try to impute missing values
+
+df.3%>%
+  is.na()%>%
+  reshape2::melt()%>%
+  ggplot(aes (Var2, 
+              Var1, 
+              fill=value)) +
+  geom_raster()+
+  coord_flip()+
+  scale_y_continuous(NULL, 
+                     expand = c(0,0))+
+  theme(axis.text.y = element_text(
+    size=4
+  ))
 ```
 
+# prior to imputation, we need to modify our variables.
+- this includes standardizing numeric variables
+- creating dummy variables for string/categorical variables
 
+For this step, we will be using tidyverse's recipe package:
 
-
-Imputation section:
 ```{r}
+df.3_recipe<- df.3%>%
+  recipe(SalePrice~.)%>%
+  #step_impute_knn(all_predictors(), neighbors = 6)%>%
+  #step_integer(matches("Qual|Cond|QC|Qu"))
+  step_YeoJohnson(all_numeric())%>%
+  step_center(all_numeric(), -all_outcomes())%>%
+  step_scale(all_numeric(), -all_outcomes())%>%
+  step_other(Neighborhood, threshold = 0.01,
+             other= "other")%>% 
+  step_dummy(all_nominal(),
+             one_hot = TRUE)#all nominal string variable be turned into dummy coded numeric values
+  
 
+#prep recipe and bake them into df
+df.4<- prep(df.3_recipe,
+            training = df.3)%>%
+  bake(df.3) #we now have 201 variables
+
+write_csv(df.4, "data/train_r_11.17.2021.csv")
+```
+
+categorical
+```{r}
+count(df.3, Neighborhood) 
+#Blueste neighborhood has only 2
+ 
+```
+
+## RANDOM FOREST
+
+Tingting, feel free to review codes above and modify them as you need to. 
+
+```{r remove illegal varnames}
+
+names(df.4)[which(names(df.4)=="1stFlrSF")] <- "FrstFlrSF"
+names(df.4)[which(names(df.4)=="2ndFlrSF")] <- "ScndFlrSF"
 
 ```
+
+
+```{r split data}
+df.5 <- df.4 %>% stats::na.omit()
+
+split_index <- createDataPartition(df.5$SalePrice, p = 0.8, list = F) #80:20 split
+
+training <- df.5[split_index,]
+
+features_test <- df.5[-split_index, !(colnames(df.5) %in% c('SalePrice'))]
+target_test <- df.5[-split_index, 'SalePrice']
+```
+
+
+```{r train RF}
+#mtry could be p/3 or sqrt(p)
+rf_train <- randomForest::randomForest(SalePrice~., data = training, mtry = round(79/3))
+
+```
+
+```{r evaluate RF}
+purities <- randomForest::importance(rf_train) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+purities[order(purities$IncNodePurity, decreasing = T),] %>%top_n(15)
+```
+
+```{r calculate RMSE}
+rf_preds <- predict(rf_train, newdata = features_test)
+rf_mse <- mean((rf_preds - target_test$SalePrice)^2)
+sqrt(rf_mse) #0.05193945 for mtry = sqrt(79)
+```
+
+
+
+
+
+
+
+To do;
+1. Rename to tidy names
+2. more insights
+3. impute NA, replace df.5
+4. evaluate performance given test.csv
+
+Considerations:
+1. Will need to transform training set too
+2. do we want to do cross-validation? Do we want to combine all training and testing data then sample or just use CV within the training data alone
+3. 
+
 
